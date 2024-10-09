@@ -1,0 +1,9 @@
+# Used to obtain an api key
+# https://developer.spotify.com/documentation/web-api/tutorials/getting-started#create-an-app
+client_id = ""
+# Used to obtain an api key
+# https://developer.spotify.com/documentation/web-api/tutorials/getting-started#create-an-app
+client_secret = ""
+
+# The language to translate the title to if it's not in English
+translate_to = "en"
