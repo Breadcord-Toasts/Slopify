@@ -274,8 +274,11 @@ class SlopifyCog(breadcord.helpers.HTTPModuleCog):
             url=track_data["external_urls"]["spotify"],
             description="\n".join(line for line in (
                 "**Artists:** " + ", ".join([artist["name"] for artist in track_data["artists"]]),
-                f"**Album:** {track_data['album']['name']}" if track_data["album"]["total_tracks"] > 1 else None,
+                f"**Album:** {track_data['album']['name']}"
+                f" (track {track_data['disc_number']}/{track_data['album']['total_tracks']})"
+                if track_data["album"]["total_tracks"] > 1 else None,
                 f"**Length:** {readable_delta(datetime.timedelta(seconds=int(track_data['duration_ms'] / 1000)))}",
+                f"**Popularity:** {track_data['popularity']:,}",
                 f"**YT:** [Link](https://youtu.be/{await self.spotify_to_yt(track_data['id'])})",
             ) if line is not None),
         ).set_thumbnail(url=max(
