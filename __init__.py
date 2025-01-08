@@ -111,7 +111,7 @@ class SpotifyAPI(AIOLoadable):
 # Stolen from polyplayer... I should really figure out how to make a shared lib for these
 class InvidiousAPI(AIOLoadable):
     def __init__(self, host_url: str | None = None) -> None:
-        self.host_url: str | None = host_url.rstrip("/") if host_url else None
+        self.host_url: URL | None = URL(host_url) if host_url else None
         self.logger = getLogger("slopify.Invidious")
         self.session: aiohttp.ClientSession = aiohttp.ClientSession()
 
@@ -123,7 +123,7 @@ class InvidiousAPI(AIOLoadable):
     async def close(self) -> None:
         await self.session.close()
 
-    async def find_best_host(self) -> str:
+    async def find_best_host(self) -> URL:
         async with self.session.get("https://api.invidious.io/instances.json") as response:
             instances_list: list[dict] = [
                 instance
@@ -135,15 +135,25 @@ class InvidiousAPI(AIOLoadable):
                     instance.get("uri"),
                 ))
             ]
-        return max(
-            instances_list,
-            key=lambda instance: instance["stats"]["usage"]["users"]["activeHalfyear"],
-        )["uri"]
+        best: URL | None = None
+        while not best and instances_list:
+            candidate = instances_list.pop(0)["uri"]
+            try:
+                await self.search_for("Never Gonna Give You Up", host_url=URL(candidate))
+            except (BadResponseError, aiohttp.ClientError):
+                self.logger.warning(f"Failed to connect to {candidate}, trying next")
+            else:
+                best = URL(candidate)
+        if not best:
+            raise RuntimeError("No invidious instances available")
+        return best
 
-    async def get_video(self, video_id: str) -> dict:
+    async def get_video(self, video_id: str, *, host_url: URL | None = None) -> dict:
+        url = (host_url or self.host_url)
+        if url is None: raise ValueError("No host url")
         async def inner():
             self.logger.debug(f"Fetching video with ID: {video_id}")
-            async with self.session.get(f"{self.host_url}/api/v1/videos/{video_id}") as response:
+            async with self.session.get(url / "/api/v1/videos/{video_id}") as response:
                 data = await response.json()
                 if error := data.get("error"):
                     raise BadResponseError(f"Error fetching video: {error}")
@@ -156,10 +166,12 @@ class InvidiousAPI(AIOLoadable):
             self.logger.warning("Failed to fetch video, trying once more")
             return await inner()
 
-    async def search_for(self, query: str) -> list[dict]:
+    async def search_for(self, query: str, *, host_url: URL | None = None) -> list[dict]:
         self.logger.debug(f"Searching for: {query}")
+        url = (host_url or self.host_url)
+        if url is None: raise ValueError("No host url")
         async with self.session.get(
-            URL(f"{self.host_url}/api/v1/search") % {
+            URL(url / "api/v1/search") % {
                 "q": query,
                 "sort_by": "relevance",
                 "type": "video",
@@ -169,13 +181,15 @@ class InvidiousAPI(AIOLoadable):
                 raise BadResponseError(f"Error fetching search results: {response.reason}")
             return await response.json()
 
-    async def get_audio_url(self, video: dict) -> URL:
+    async def get_audio_url(self, video: dict, *, host_url: URL | None = None) -> URL:
+        url = (host_url or self.host_url)
+        if url is None: raise ValueError("No host url")
         best = max(
             (frmt for frmt in video["adaptiveFormats"] if frmt["type"].startswith("audio/")),
             key=lambda frmt: frmt["bitrate"],
         )
         async with self.session.get(
-            URL(f"{self.host_url}/latest_version") % {
+            url / "latest_version" % {
                 "id": video["videoId"],
                 "itag": best["itag"],
                 "local": "true",
@@ -197,7 +211,7 @@ class SlopifyCog(breadcord.helpers.HTTPModuleCog):
     def __init__(self, module_id: str) -> None:
         super().__init__(module_id)
         self.spotify: SpotifyAPI = SpotifyAPI(settings=cast(breadcord.config.SettingsGroup, self.settings))
-        self.invidious: InvidiousAPI = InvidiousAPI("https://inv.nadeko.net/")
+        self.invidious: InvidiousAPI = InvidiousAPI()
 
         self.embed_track_ctx_menu = discord.app_commands.ContextMenu(
             name="Embed Track",
@@ -207,8 +221,12 @@ class SlopifyCog(breadcord.helpers.HTTPModuleCog):
 
     async def cog_load(self) -> None:
         await super().cog_load()
-        await self.spotify.load()
-        await self.invidious.load()
+        try:
+            await self.spotify.load()
+            await self.invidious.load()
+        except Exception as error:
+            self.logger.error(f"Failed to load: {error}")
+            await self.cog_unload()
 
     async def cog_unload(self) -> None:
         await super().cog_unload()
