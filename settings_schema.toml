@@ -7,3 +7,7 @@ client_secret = ""
 
 # The language to translate the title to if it's not in English
 translate_to = "en"
+
+# The invidious instance to use for fetching YouTube videos. Left blank, one will be chosen automatically.
+# This is the part to which `/api` will be appended when sending requests.
+invidious_host = ""
